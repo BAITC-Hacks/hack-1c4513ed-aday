@@ -126,7 +126,12 @@ def transit(path, supplier):
 
 
 def moq(path):
-    df = sheet(path, ["код", "артикул"])
+    # Explicitly read cached formula results, never external VLOOKUP references.
+    book = load_workbook(path, read_only=True, data_only=True)
+    rows = list(book.active.values)
+    book.close()
+    header = next(i for i, row in enumerate(rows[:8]) if any("код" in str(v).lower() for v in row) and any("артикул" in str(v).lower() for v in row))
+    df = pd.DataFrame(rows[header + 1:], columns=[str(v).strip() for v in rows[header]])
     key = column(df, "код 1с", "номенклатура.код")
     value = column(df, "мин. разр", "кратность")
     df["code"] = df[key].map(code)

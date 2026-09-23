@@ -69,8 +69,9 @@ if supplier in ("Все", "Systeme Electric"):
 
 st.subheader("Карточка артикула")
 if len(view):
-    chosen = st.selectbox("Позиция", view.code.tolist(), format_func=lambda x: f"{x} — {view.loc[view.code == x, 'name'].iloc[0]}")
-    item = view[view.code == chosen].iloc[0]
+    chosen_index = st.selectbox("Позиция", view.index.tolist(), format_func=lambda x: f"{view.loc[x, 'supplier']} · {view.loc[x, 'code']} — {view.loc[x, 'name']}")
+    item = view.loc[chosen_index]
+    chosen = item.code
     source = "IEK" if item.supplier == "IEK" else "SystemeElectric"
     history = results[source]["demand"].query("code == @chosen").sort_values("month")
     pred = results[source]["predictions"].query("code == @chosen").sort_values("month")
@@ -105,9 +106,10 @@ if question:
     st.rerun()
 
 st.divider()
+signature = pd.util.hash_pandas_object(edited, index=False).sum(), supplier, tuple(categories), tuple(urgencies), show_all, settings
 if st.button("Утвердить заказ", type="primary", disabled=edited.empty):
-    st.session_state.approved = True
-if st.session_state.get("approved"):
+    st.session_state.approved_signature = signature
+if st.session_state.get("approved_signature") == signature:
     st.success("Заказ утверждён. Файлы для каждого поставщика готовы к выгрузке.")
     approved = edited[["Код 1С", "Артикул поставщика", "Наименование", "Поставщик", "Корректировка"]].copy()
     approved = approved.rename(columns={"Корректировка": "Количество"})
