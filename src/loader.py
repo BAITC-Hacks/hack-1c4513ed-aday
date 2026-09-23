@@ -37,15 +37,15 @@ def month_header(x):
 
 def sheet(path, required):
     """Find a header row by keyword groups, preferring the first matching sheet."""
-    book = pd.ExcelFile(path)
-    for name in book.sheet_names:
-        preview = pd.read_excel(book, sheet_name=name, header=None, nrows=8)
-        for i, row in preview.iterrows():
-            cells = [str(v).lower().strip() for v in row if pd.notna(v)]
-            if all(any(key in cell for cell in cells) for key in required):
-                df = pd.read_excel(book, sheet_name=name, header=i)
-                df.columns = [str(c).strip() for c in df.columns]
-                return df
+    with pd.ExcelFile(path) as book:
+        for name in book.sheet_names:
+            preview = pd.read_excel(book, sheet_name=name, header=None, nrows=8)
+            for i, row in preview.iterrows():
+                cells = [str(v).lower().strip() for v in row if pd.notna(v)]
+                if all(any(key in cell for cell in cells) for key in required):
+                    df = pd.read_excel(book, sheet_name=name, header=i)
+                    df.columns = [str(c).strip() for c in df.columns]
+                    return df
     raise ValueError(f"Не найдены заголовки {required}: {path}")
 
 

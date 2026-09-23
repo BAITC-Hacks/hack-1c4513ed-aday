@@ -19,7 +19,13 @@ def upload_books():
     transit = pd.DataFrame({"Код 1с": ["A_"], "Артикул ИЭК": ["T-1"], "Наименование": ["Товар"], "РФ УТ-1 от 1 августа 2026 г. (поступление до 01.09.2026)": [5]})
     moq = pd.DataFrame({"№": [1], "Код 1с": ["A_"], "Артикул поставщика": ["T-1"], "Наименование": ["Товар"], "Мин. разр. к отгр.": [2]})
     season = pd.DataFrame([[2024] + [100] * 12, [2025] + [100] * 12], columns=["год"] + [f"месяц {i}" for i in range(12)])
-    return dict(zip(FILES, map(workbook, (tx, sales, stock, transit, moq, season))))
+    books = dict(zip(FILES, map(workbook, (tx, sales, stock, transit, moq, season))))
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        pd.DataFrame({"Примечание": ["Служебный лист"]}).to_excel(writer, sheet_name="Служебный", index=False)
+        transit.to_excel(writer, sheet_name="Лист4", index=False)
+    books["in_transit.xlsx"] = BytesIO(buffer.getvalue())
+    return books
 
 
 def test_uploads_are_validated_and_loaded(tmp_path, monkeypatch, upload_books):
