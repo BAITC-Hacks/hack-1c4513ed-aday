@@ -1,6 +1,5 @@
 """EKT StockPilot — purchasing dashboard."""
 from dataclasses import replace
-from io import BytesIO
 from pathlib import Path
 import time
 import pandas as pd
@@ -9,6 +8,7 @@ import streamlit as st
 from src.config import DEFAULT
 from src.loader import load_supplier, source_signature
 from src.pipeline import prepare, finish
+from src.export import build_workbook
 from src.llm import explain_item as ai_explain, assistant_answer
 
 st.set_page_config(page_title="EKT StockPilot", page_icon="📦", layout="wide")
@@ -76,13 +76,17 @@ view = view.sort_values(["supplier", "recommended"], ascending=[True, False])
 a, b, c = st.columns(3)
 a.metric("Позиций к заказу", int((view.recommended > 0).sum()))
 b.metric("Из них критичных", int(((view.recommended > 0) & (view.urgency == "Критично")).sum()))
-c.metric("Суммарное количество", f"{view.recommended.sum():,.0f}")
+c.metric("Поставщиков в заказе", int(view.loc[view.recommended > 0, "supplier"].nunique()))
 st.subheader("Рекомендованный заказ")
+st.caption("Экспорт станет доступен после утверждения заказа")
 
 mapping = {"code": "Код 1С", "article": "Артикул поставщика", "name": "Наименование", "supplier": "Поставщик", "category": "Категория ABC", "manager_category": "Категория 2026", "stock": "Остаток", "transit": "В пути", "forecast_month": "Прогноз/мес", "safety_stock": "Страховой запас", "moq": "MOQ", "recommended": "Рекомендовано", "urgency": "Срочность", "explanation": "Обоснование"}
 display = view[list(mapping)].rename(columns=mapping).reset_index(drop=True)
+for col in ("Остаток", "В пути", "Страховой запас", "MOQ", "Рекомендовано"):
+    display[col] = pd.to_numeric(display[col], errors="coerce").fillna(0).round().astype("Int64")
+display["Прогноз/мес"] = pd.to_numeric(display["Прогноз/мес"], errors="coerce").fillna(0).round(1)
 display["Корректировка"] = display["Рекомендовано"]
-edited = st.data_editor(display, hide_index=True, width="stretch", num_rows="fixed", disabled=list(mapping.values()), column_config={"Корректировка": st.column_config.NumberColumn(min_value=0, step=1)}, key="order_editor")
+edited = st.data_editor(display, hide_index=True, width="stretch", row_height=96, num_rows="fixed", disabled=list(mapping.values()), column_config={"Корректировка": st.column_config.NumberColumn(min_value=0, step=1), "Обоснование": st.column_config.TextColumn(width=750, help="Полный текст обоснования также показан в карточке артикула")}, key="order_editor")
 if not edited["Корректировка"].equals(display["Корректировка"]):
     st.session_state.approved = False
 
@@ -137,21 +141,20 @@ signature = pd.util.hash_pandas_object(edited, index=False).sum(), supplier, tup
 if st.button("Утвердить заказ", type="primary", disabled=edited.empty):
     st.session_state.approved_signature = signature
 if st.session_state.get("approved_signature") == signature:
-    st.success("Заказ утверждён. Файлы для каждого поставщика готовы к выгрузке.")
-    approved = edited[["Код 1С", "Артикул поставщика", "Наименование", "Поставщик", "Корректировка"]].copy()
+    st.success("Заказ утверждён. Файл Excel готов к выгрузке.")
+    approved = edited[["Код 1С", "Артикул поставщика", "Наименование", "Поставщик", "Корректировка", "Срочность", "Обоснование"]].copy()
     approved = approved.rename(columns={"Корректировка": "Количество"})
-    approved["Количество"] = pd.to_numeric(approved["Количество"], errors="coerce").fillna(0)
+    approved["Количество"] = pd.to_numeric(approved["Количество"], errors="coerce").fillna(0).round().astype(int)
     approved = approved[approved["Количество"] > 0]
     folder = Path(__file__).resolve().parent / "output"
     folder.mkdir(exist_ok=True)
-    for vendor, group in approved.groupby("Поставщик"):
-        export = group.drop(columns="Поставщик")
-        stem = "IEK" if vendor == "IEK" else "SystemeElectric"
-        csv = export.to_csv(index=False, sep=";", encoding="utf-8-sig")
-        buffer = BytesIO()
-        export.to_excel(buffer, index=False)
-        (folder / f"order_{stem}.csv").write_text(csv, encoding="utf-8-sig")
-        (folder / f"order_{stem}.xlsx").write_bytes(buffer.getvalue())
-        left, right = st.columns(2)
-        left.download_button(f"Скачать {vendor} CSV", csv.encode("utf-8-sig"), file_name=f"order_{stem}.csv", mime="text/csv")
-        right.download_button(f"Скачать {vendor} Excel", buffer.getvalue(), file_name=f"order_{stem}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    workbook = build_workbook(approved, DEFAULT.as_of)
+    (folder / "stockpilot_order.xlsx").write_bytes(workbook)
+    st.download_button("Скачать заказ (Excel)", workbook, file_name="stockpilot_order.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+    with st.expander("Дополнительно: CSV по поставщикам"):
+        for vendor, group in approved.groupby("Поставщик"):
+            export = group[["Код 1С", "Артикул поставщика", "Наименование", "Количество"]]
+            stem = "IEK" if vendor == "IEK" else "SystemeElectric"
+            csv = export.to_csv(index=False, sep=";")
+            (folder / f"order_{stem}.csv").write_text(csv, encoding="utf-8-sig")
+            st.download_button(f"Скачать {vendor} CSV", csv.encode("utf-8-sig"), file_name=f"order_{stem}.csv", mime="text/csv")
