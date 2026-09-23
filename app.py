@@ -2,37 +2,63 @@
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
+import time
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from src.config import DEFAULT
-from src.pipeline import calculate_all
+from src.loader import load_supplier, source_signature
+from src.pipeline import prepare, finish
 from src.llm import explain_item as ai_explain, assistant_answer
 
 st.set_page_config(page_title="EKT StockPilot", page_icon="📦", layout="wide")
 st.title("EKT StockPilot — автопилот закупа")
 st.caption("Расчёт на 22.09.2026 по выгрузкам 1С. Количества рассчитывает Python; ИИ помогает с объяснением.")
 
+@st.cache_data(show_spinner=False)
+def cached_prepare(name, fingerprint):
+    started = time.perf_counter()
+    prepared = prepare(load_supplier(name))
+    return prepared, time.perf_counter() - started
+
+
 with st.sidebar:
     st.header("Настройки расчёта")
     supplier = st.selectbox("Поставщик", ["Все", "IEK", "Systeme Electric"])
     categories = st.multiselect("Категория ABC", ["A", "B", "C"], default=["A", "B", "C"])
     urgencies = st.multiselect("Срочность", ["Критично", "Высокая", "Плановая"], default=["Критично", "Высокая", "Плановая"])
-    review = st.number_input("Период пересмотра R, дней", 1, 120, DEFAULT.review_days)
-    z_a = st.number_input("Уровень сервиса A, z", 0.0, 4.0, DEFAULT.service_z["A"], step=.01)
-    z_b = st.number_input("Уровень сервиса B, z", 0.0, 4.0, DEFAULT.service_z["B"], step=.01)
-    z_c = st.number_input("Уровень сервиса C, z", 0.0, 4.0, DEFAULT.service_z["C"], step=.01)
-    show_all = st.checkbox("Показать позиции без продаж и заказа", False)
-    calculate = st.button("Рассчитать", type="primary", width="stretch")
+    show_all = st.checkbox("Показать все позиции", False)
+    with st.form("calculation_settings"):
+        review = st.number_input("Период пересмотра R, дней", 1, 120, DEFAULT.review_days)
+        z_a = st.number_input("Уровень сервиса A, z", 0.0, 4.0, DEFAULT.service_z["A"], step=.01)
+        z_b = st.number_input("Уровень сервиса B, z", 0.0, 4.0, DEFAULT.service_z["B"], step=.01)
+        z_c = st.number_input("Уровень сервиса C, z", 0.0, 4.0, DEFAULT.service_z["C"], step=.01)
+        calculate = st.form_submit_button("Рассчитать", type="primary", width="stretch")
 
-settings = (int(review), float(z_a), float(z_b), float(z_c))
-if calculate or "calculation" not in st.session_state or st.session_state.get("settings") != settings:
+if calculate or "calculation" not in st.session_state:
+    settings = (int(review), float(z_a), float(z_b), float(z_c))
     config = replace(DEFAULT, review_days=int(review), service_z={"A": z_a, "B": z_b, "C": z_c})
-    with st.spinner("Читаем выгрузки и считаем потребность…"):
+    with st.spinner("Считаем потребность…"):
         try:
-            st.session_state.calculation = calculate_all(config=config)
+            results = {}
+            heavy_total = light_total = 0.0
+            for name in ("IEK", "SystemeElectric"):
+                started = time.perf_counter()
+                prepared, compute_time = cached_prepare(name, source_signature(name))
+                heavy_elapsed = time.perf_counter() - started
+                heavy_total += heavy_elapsed
+                print(f"{name}: тяжёлая часть доступ {heavy_elapsed:.2f} с, исходный расчёт {compute_time:.2f} с")
+                started = time.perf_counter()
+                results[name] = finish(prepared, config)
+                light_elapsed = time.perf_counter() - started
+                light_total += light_elapsed
+                print(f"{name}: лёгкая часть {light_elapsed:.2f} с")
+            full = pd.concat([r["orders"] for r in results.values()], ignore_index=True)
+            print(f"Итого: тяжёлая часть {heavy_total:.2f} с, лёгкая часть {light_total:.2f} с")
+            st.session_state.calculation = (results, full)
             st.session_state.settings = settings
-            st.session_state.approved = False
+            st.session_state.timings = (heavy_total, light_total)
+            st.session_state.approved_signature = None
         except Exception as exc:
             st.error(f"Не удалось рассчитать заказ: {exc}")
             st.stop()
@@ -41,6 +67,7 @@ results, full = st.session_state.calculation
 view = full[full.recommended > 0].copy()
 if show_all:
     view = full.copy()
+    st.warning("Показаны все позиции, включая нулевые заказы. Таблица может быть большой.")
 if supplier != "Все":
     view = view[view.supplier == supplier]
 view = view[view.category.isin(categories) & view.urgency.isin(urgencies)].copy()
@@ -106,7 +133,7 @@ if question:
     st.rerun()
 
 st.divider()
-signature = pd.util.hash_pandas_object(edited, index=False).sum(), supplier, tuple(categories), tuple(urgencies), show_all, settings
+signature = pd.util.hash_pandas_object(edited, index=False).sum(), supplier, tuple(categories), tuple(urgencies), show_all, st.session_state.settings
 if st.button("Утвердить заказ", type="primary", disabled=edited.empty):
     st.session_state.approved_signature = signature
 if st.session_state.get("approved_signature") == signature:

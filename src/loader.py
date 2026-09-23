@@ -8,6 +8,7 @@ import numpy as np
 from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
+FILES = ("sales_tx.xlsx", "sales_monthly.xlsx", "stock_monthly.xlsx", "in_transit.xlsx", "moq.xlsx", "seasonality.xlsx")
 MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "ноя", "дек"]
 FULL_MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 
@@ -169,3 +170,9 @@ def load_supplier(supplier, use_cache=True):
     with cache.open("wb") as f:
         pickle.dump(result, f)
     return result
+
+
+def source_signature(supplier):
+    """Cache key changes whenever a source workbook changes."""
+    folder = ROOT / "data" / "raw" / supplier
+    return tuple((name, (folder / name).stat().st_mtime_ns, (folder / name).stat().st_size) for name in FILES)

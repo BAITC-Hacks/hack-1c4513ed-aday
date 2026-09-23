@@ -7,12 +7,22 @@ from src.replenish import replenish
 import pandas as pd
 
 
-def calculate(data, config=DEFAULT):
+def prepare(data, config=DEFAULT):
+    """Heavy stage: independent of review period and service factors."""
     cleaned, spikes = clean(data["sales"], data["tx"], config)
     demand = restore(cleaned, data["stocks"], data["season"])
     predictions = forecast(demand, data["season"], config)
-    orders = replenish(data["items"], demand, predictions, data["lead_days"], config)
-    return {"orders": orders, "demand": demand, "predictions": predictions, "spikes": spikes}
+    return {"items": data["items"], "lead_days": data["lead_days"], "demand": demand, "predictions": predictions, "spikes": spikes}
+
+
+def finish(prepared, config=DEFAULT):
+    """Light stage: only ABC, safety stock, urgency and order quantities."""
+    orders = replenish(prepared["items"], prepared["demand"], prepared["predictions"], prepared["lead_days"], config)
+    return {**prepared, "orders": orders}
+
+
+def calculate(data, config=DEFAULT):
+    return finish(prepare(data, config), config)
 
 
 def calculate_all(suppliers=("IEK", "SystemeElectric"), config=DEFAULT):
