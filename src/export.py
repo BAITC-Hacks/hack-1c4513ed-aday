@@ -13,7 +13,8 @@ def build_workbook(approved, as_of):
     summary.title = "Сводка"
     summary.append(["Поставщик", "Число позиций", "Дата расчёта"])
     for supplier, group in approved.groupby("Поставщик", sort=True):
-        summary.append([supplier, len(group), as_of.strftime("%d.%m.%Y")])
+        date = as_of[supplier] if isinstance(as_of, dict) else as_of
+        summary.append([supplier, len(group), date.strftime("%d.%m.%Y")])
         sheet = book.create_sheet(supplier)
         sheet.append(ORDER_COLUMNS)
         for values in group[ORDER_COLUMNS].itertuples(index=False, name=None):

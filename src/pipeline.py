@@ -10,7 +10,7 @@ import pandas as pd
 def prepare(data, config=DEFAULT):
     """Heavy stage: independent of review period and service factors."""
     cleaned, spikes = clean(data["sales"], data["tx"], config)
-    demand = restore(cleaned, data["stocks"], data["season"])
+    demand = restore(cleaned, data["stocks"], data["season"], config)
     predictions = forecast(demand, data["season"], config)
     return {"items": data["items"], "lead_days": data["lead_days"], "demand": demand, "predictions": predictions, "spikes": spikes}
 

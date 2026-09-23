@@ -1,7 +1,7 @@
 from io import BytesIO
 import pandas as pd
 import pytest
-from src.loader import FILES, load_supplier
+from src.loader import FILES, load_supplier, transit
 from src.uploads import validate_and_store
 
 
@@ -44,3 +44,15 @@ def test_upload_error_names_bad_file(tmp_path, monkeypatch, upload_books):
     with pytest.raises(ValueError, match="sales_monthly.xlsx"):
         validate_and_store("IEK", upload_books)
     assert not list((tmp_path / "data" / "uploads" / "IEK").glob("staging-*"))
+
+
+def test_empty_manager_order_is_not_zero(tmp_path):
+    frame = pd.DataFrame({"Код 1с": ["A_"], "Артикул поставщика": ["AT-1"], "Наименование": ["Товар"], "Категория 2026": ["A"], "Ср мес за последние 12 мес": [42.5], "Свободный остаток": [10], "Запас": [2.3], "Заказ": [None], "СЭ в пути 24.09": [5]})
+    path = tmp_path / "in_transit.xlsx"
+    frame.to_excel(path, index=False)
+    loaded, _ = transit(path, "SystemeElectric")
+    row = loaded.iloc[0]
+    assert pd.isna(row.manager_order)
+    assert not row.manager_order_filled
+    assert row.manager_avg12 == 42.5
+    assert row.manager_cover == 2.3

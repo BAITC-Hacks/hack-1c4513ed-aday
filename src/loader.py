@@ -10,6 +10,7 @@ from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ("sales_tx.xlsx", "sales_monthly.xlsx", "stock_monthly.xlsx", "in_transit.xlsx", "moq.xlsx", "seasonality.xlsx")
+CACHE_SCHEMA = 2
 MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "ноя", "дек"]
 FULL_MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 
@@ -86,6 +87,14 @@ def transactions(path):
     return df[["date", "invoice", "code", "qty"]].reset_index(drop=True)
 
 
+def latest_sale_date(tx):
+    """Use the latest reliable invoice date as the calculation date."""
+    latest = tx.date.dropna().max()
+    if pd.isna(latest):
+        raise ValueError("sales_tx.xlsx: нет расходных накладных с 2025-01-01")
+    return latest.date()
+
+
 def brand_season(path):
     book = load_workbook(path, read_only=True, data_only=True)
     rows = list(book.active.values)
@@ -118,17 +127,23 @@ def transit(path, supplier):
         df["transit"] = df[doc_cols].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
         df["article"] = df[column(df, "артикул")].fillna("").astype(str)
         df["manager_category"] = ""
-        df["manager_order"] = 0.0
+        df["manager_order"] = np.nan
+        df["manager_order_filled"] = False
+        df["manager_avg12"] = np.nan
+        df["manager_cover"] = np.nan
         df["free_stock"] = np.nan
         lead_days = round(statistics.median(lead)) if lead else 30
     else:
         df["transit"] = pd.to_numeric(df[column(df, "сэ в пути")], errors="coerce").fillna(0)
         df["article"] = df[column(df, "артикул поставщика")].fillna("").astype(str)
         df["manager_category"] = df[column(df, "категория 2026")].fillna("").astype(str)
-        df["manager_order"] = pd.to_numeric(df[column(df, "заказ")], errors="coerce").fillna(0)
+        df["manager_order"] = pd.to_numeric(df[column(df, "заказ")], errors="coerce")
+        df["manager_order_filled"] = df.manager_order.notna()
+        df["manager_avg12"] = pd.to_numeric(df[column(df, "ср мес за последние 12")], errors="coerce")
+        df["manager_cover"] = pd.to_numeric(df[column(df, "запас")], errors="coerce")
         df["free_stock"] = pd.to_numeric(df[column(df, "свободный остаток")], errors="coerce")
         lead_days = 30
-    return df[["code", "article", "transit", "manager_category", "manager_order", "free_stock"]].drop_duplicates("code"), lead_days
+    return df[["code", "article", "transit", "manager_category", "manager_order", "manager_order_filled", "manager_avg12", "manager_cover", "free_stock"]].drop_duplicates("code"), lead_days
 
 
 def moq(path):
@@ -152,7 +167,7 @@ def load_supplier(supplier, use_cache=True, source_dir=None):
         raise ValueError(supplier)
     raw = Path(source_dir).resolve() if source_dir is not None else ROOT / "data" / "raw" / supplier
     suffix = "" if source_dir is None else "-" + hashlib.sha256(str(raw).encode()).hexdigest()[:12]
-    cache = ROOT / "data" / "cache" / f"{supplier}{suffix}.pkl"
+    cache = ROOT / "data" / "cache" / f"{supplier}{suffix}-v{CACHE_SCHEMA}.pkl"
     sources = [raw / name for name in FILES]
     missing = [path.name for path in sources if not path.is_file()]
     if missing:
@@ -185,15 +200,15 @@ def load_supplier(supplier, use_cache=True, source_dir=None):
     items["article"] = items.article.fillna("")
     items.loc[items.article == "", "article"] = items.moq_article.fillna("")
     items["moq"] = items.moq.fillna(1)
-    for col in ("transit", "manager_order"):
-        items[col] = items[col].fillna(0)
+    items["transit"] = items.transit.fillna(0)
+    items["manager_order_filled"] = items.manager_order_filled.eq(True)
     items["manager_category"] = items.manager_category.fillna("")
     items["supplier"] = "IEK" if supplier == "IEK" else "Systeme Electric"
     try:
         season = brand_season(raw / "seasonality.xlsx")
     except Exception as exc:
         raise ValueError(f"seasonality.xlsx: {exc}") from exc
-    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": season, "lead_days": lead}
+    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": season, "lead_days": lead, "source_as_of": latest_sale_date(tx)}
     if use_cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         with cache.open("wb") as f:

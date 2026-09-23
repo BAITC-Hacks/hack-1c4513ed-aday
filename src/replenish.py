@@ -3,7 +3,7 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 from src.config import DEFAULT
-from src.explain import explain_item
+from src.explain import explain_item, short_reason
 
 
 def replenish(items, demand, predictions, lead_days, config=DEFAULT):
@@ -20,9 +20,11 @@ def replenish(items, demand, predictions, lead_days, config=DEFAULT):
     )
     out = out.join(recent, on="code")
     out[["recent_sales", "active_months"]] = out[["recent_sales", "active_months"]].fillna(0)
-    latest = demand[demand.month == last_month][["code", "stock"]].drop_duplicates("code")
+    latest = demand[demand.month == last_month][["code", "stock", "excluded", "spike_count"]].drop_duplicates("code")
+    latest = latest.rename(columns={"excluded": "current_spike_qty", "spike_count": "current_spike_count"})
     out = out.merge(latest, on="code", how="left")
     out["stock"] = out.free_stock.combine_first(out.stock).fillna(0)
+    out[["current_spike_qty", "current_spike_count"]] = out[["current_spike_qty", "current_spike_count"]].fillna(0)
     out = out.sort_values("volume", ascending=False)
     total = out.volume.sum()
     before = (out.volume.cumsum() - out.volume) / total if total else 0
@@ -59,6 +61,8 @@ def replenish(items, demand, predictions, lead_days, config=DEFAULT):
     out["recommended"] = np.ceil((out.need - out.stock - out.transit).clip(lower=0) / out.moq.clip(lower=1)) * out.moq.clip(lower=1)
     out.loc[out.no_stable_demand, "recommended"] = 0
     out["days_cover"] = (out.stock + out.transit) / (out.forecast_month / 30).replace(0, np.nan)
+    out["cover_after_months"] = (out.stock + out.transit + out.recommended) / out.forecast_month.replace(0, np.nan)
     out["urgency"] = np.where(out.days_cover < lead_days, "Критично", np.where(out.days_cover < lead_days + 14, "Высокая", "Плановая"))
+    out["short_reason"] = out.apply(short_reason, axis=1)
     out["explanation"] = out.apply(explain_item, axis=1)
     return out.reset_index(drop=True)

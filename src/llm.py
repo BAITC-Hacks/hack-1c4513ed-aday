@@ -10,7 +10,7 @@ load_dotenv()
 def _ask(system, user):
     from openai import OpenAI
     providers = [
-        ("OPENAI_API_KEY", "OPENAI_MODEL", "gpt-4.1-nano", None),
+        ("OPENAI_API_KEY", "OPENAI_MODEL", "gpt-4.1-mini", None),
         ("NVIDIA_API_KEY", "NVIDIA_MODEL", "meta/llama-3.1-8b-instruct", "https://integrate.api.nvidia.com/v1"),
     ]
     for key_name, model_name, default_model, base_url in providers:

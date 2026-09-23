@@ -6,6 +6,7 @@ import pytest
 from src.config import DEFAULT
 from src.forecast import forecast
 from src.loader import load_supplier
+from src.loader import latest_sale_date
 from src.outliers import clean
 from src.pipeline import calculate
 from src.replenish import replenish
@@ -118,6 +119,28 @@ def test_recurring_wholesale_kept(sample):
     cleaned, spikes = clean(sample["sales"], sample["tx"])
     assert not spikes.qty.eq(1000).any()
     assert cleaned.loc[cleaned.month.isin(pd.to_datetime(months)), "clean_qty"].eq(1020).all()
+
+
+def test_current_month_spike_is_explained_without_changing_stock(sample):
+    baseline = calculate(sample)["orders"].iloc[0]
+    changed = deepcopy(sample)
+    changed["sales"].loc[changed["sales"].month == "2026-09-01", "qty"] += 7488
+    changed["tx"] = pd.concat([changed["tx"], pd.DataFrame({"date": [pd.Timestamp("2026-09-02")], "invoice": ["once"], "code": ["A_"], "qty": [7488.]})], ignore_index=True)
+    result = calculate(changed)
+    item = result["orders"].iloc[0]
+    assert item.current_spike_qty == 7488
+    assert item.current_spike_count == 1
+    assert item.stock == baseline.stock
+    assert item.recommended == baseline.recommended
+    assert "В текущем месяце обнаружена разовая отгрузка 7 488 шт." in item.explanation
+    assert item.explanation.startswith(item.short_reason)
+    assert len(result["spikes"].query("code == 'A_' and qty == 7488")) == 1
+
+
+def test_calculation_date_comes_from_latest_invoice(sample):
+    assert latest_sale_date(sample["tx"]) == pd.Timestamp("2026-09-01").date()
+    later = pd.concat([sample["tx"], pd.DataFrame({"date": [pd.Timestamp("2026-10-03 14:00")], "invoice": ["late"], "code": ["A_"], "qty": [1.]})], ignore_index=True)
+    assert latest_sale_date(later) == pd.Timestamp("2026-10-03").date()
 
 
 def test_output_explained_by_supplier(sample):
