@@ -42,4 +42,6 @@ def explain_item(row):
     if row.get("current_spike_qty", 0) > 0:
         text += (f" В текущем месяце обнаружена разовая отгрузка {quantity(row['current_spike_qty'])} шт., "
                  "в регулярную потребность не включена.")
+    if row.get("confidence") == "Низкая":
+        text += f" Уверенность низкая: {row.get('confidence_reason', 'нужна проверка истории спроса')}."
     return text

@@ -13,6 +13,7 @@ from src.outliers import clean
 from src.pipeline import calculate
 from src.replenish import replenish
 from src.stockout import restore
+from src.backtest import run_backtest
 
 
 @pytest.fixture
@@ -137,6 +138,29 @@ def test_manual_date_no_future_leak(sample):
     pd.testing.assert_frame_equal(baseline["predictions"], compared["predictions"])
     assert baseline["orders"].iloc[0].recommended == compared["orders"].iloc[0].recommended
     assert compared["demand"].month.max() == pd.Timestamp("2026-04-01")
+
+
+def test_backtest_no_future_leak(sample):
+    first, details = run_backtest(sample, "IEK", origins=(date(2026, 4, 1),))
+    changed = deepcopy(sample)
+    changed["sales"].loc[changed["sales"].month >= "2026-04-01", "qty"] = 1000
+    changed["tx"] = pd.concat([changed["tx"], pd.DataFrame({
+        "date": [pd.Timestamp("2026-06-10")], "invoice": ["future"], "code": ["A_"], "qty": [1000.],
+    })], ignore_index=True)
+    second, changed_details = run_backtest(changed, "IEK", origins=(date(2026, 4, 1),))
+    pd.testing.assert_series_equal(details.forecast, changed_details.forecast)
+    pd.testing.assert_series_equal(details.average_12, changed_details.average_12)
+    assert not details.actual.equals(changed_details.actual)
+    assert not first.wape.equals(second.wape)
+
+
+def test_confidence_explains_sparse_demand(sample):
+    sample["sales"].loc[sample["sales"].month >= "2025-09-01", "qty"] = 0
+    sample["sales"].loc[sample["sales"].month == "2026-08-01", "qty"] = 20
+    item = calculate(sample)["orders"].iloc[0]
+    assert item.confidence == "Низкая"
+    assert item.confidence_reason
+    assert "Уверенность низкая" in item.explanation
 
 
 def test_one_off_excluded(sample):

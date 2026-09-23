@@ -35,6 +35,7 @@ with st.sidebar:
     supplier = st.selectbox("Поставщик", ["Все", "IEK", "Systeme Electric"])
     categories = st.multiselect("Категория ABC", ["A", "B", "C"], default=["A", "B", "C"])
     urgencies = st.multiselect("Срочность", ["Критично", "Высокая", "Плановая"], default=["Критично", "Высокая", "Плановая"])
+    confidence_filter = st.multiselect("Уверенность", ["Высокая", "Средняя", "Низкая"], default=["Высокая", "Средняя", "Низкая"])
     show_all = st.checkbox("Показать все позиции", False)
     automatic_date = st.checkbox("Дата автоматически по накладным", value=True, help="Чтобы выбрать дату вручную, снимите галочку и нажмите «Рассчитать».")
     with st.form("calculation_settings"):
@@ -107,4 +108,4 @@ if calculate or uploaded_now or revert_to_demo or "calculation" not in st.sessio
 results, full = st.session_state.calculation
 shown_dates = st.session_state.active_dates
 date_caption.caption("Дата расчёта: " + "; ".join(f"{name if name == 'IEK' else 'Systeme Electric'} — {date:%d.%m.%Y}" for name, date in shown_dates.items()) + ". Количества рассчитывает Python; ИИ помогает с объяснением.")
-render_dashboard(results, full, supplier, categories, urgencies, show_all)
+render_dashboard(results, full, supplier, categories, urgencies, confidence_filter, show_all)

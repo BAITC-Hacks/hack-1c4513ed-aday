@@ -5,6 +5,7 @@ import pandas as pd
 from src.config import DEFAULT
 from src.explain import explain_item, short_reason
 from src.stable import stabilize
+from src.confidence import add_confidence
 
 
 def replenish(items, demand, predictions, lead_days, config=DEFAULT):
@@ -67,6 +68,7 @@ def replenish(items, demand, predictions, lead_days, config=DEFAULT):
     out["days_cover"] = (out.stock + out.transit) / (out.forecast_month / 30).replace(0, np.nan)
     out["cover_after_months"] = (out.stock + out.transit + out.recommended) / out.forecast_month.replace(0, np.nan)
     out["urgency"] = np.where(out.days_cover < lead_days, "Критично", np.where(out.days_cover < lead_days + 14, "Высокая", "Плановая"))
+    out = add_confidence(out, demand, config)
     out["short_reason"] = out.apply(short_reason, axis=1)
     out["explanation"] = out.apply(explain_item, axis=1)
     return out.reset_index(drop=True)

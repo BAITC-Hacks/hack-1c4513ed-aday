@@ -16,8 +16,9 @@ def build_workbook(approved, as_of):
         date = as_of[supplier] if isinstance(as_of, dict) else as_of
         summary.append([supplier, len(group), date.strftime("%d.%m.%Y")])
         sheet = book.create_sheet(supplier)
-        sheet.append(ORDER_COLUMNS)
-        for values in group[ORDER_COLUMNS].itertuples(index=False, name=None):
+        columns = ORDER_COLUMNS + (["Уверенность"] if "Уверенность" in approved else [])
+        sheet.append(columns)
+        for values in group[columns].itertuples(index=False, name=None):
             sheet.append(list(values))
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
@@ -27,6 +28,8 @@ def build_workbook(approved, as_of):
         sheet.column_dimensions["D"].width = 16
         sheet.column_dimensions["E"].width = 18
         sheet.column_dimensions["F"].width = 95
+        if "Уверенность" in approved:
+            sheet.column_dimensions["G"].width = 18
         for row in sheet.iter_rows(min_row=2):
             sheet.row_dimensions[row[0].row].height = 48
             for cell in row:

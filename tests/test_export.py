@@ -24,3 +24,14 @@ def test_approved_workbook_has_supplier_sheets_and_summary():
     assert book["Сводка"]["C2"].value == "22.09.2026"
     assert book["IEK"]["A1"].font.bold
     assert book["IEK"].column_dimensions["F"].width >= 80
+
+
+def test_workbook_includes_confidence_when_available():
+    rows = pd.DataFrame({
+        "Поставщик": ["IEK"], "Код 1С": ["001_"], "Артикул поставщика": ["A"],
+        "Наименование": ["Товар"], "Количество": [12], "Срочность": ["Критично"],
+        "Обоснование": ["Нужна закупка"], "Уверенность": ["Низкая"],
+    })
+    book = load_workbook(BytesIO(build_workbook(rows, date(2026, 9, 22))))
+    assert book["IEK"]["G1"].value == "Уверенность"
+    assert book["IEK"]["G2"].value == "Низкая"
