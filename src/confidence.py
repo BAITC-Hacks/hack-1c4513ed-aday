@@ -31,7 +31,8 @@ def add_confidence(orders, demand, config=DEFAULT):
         "спрос сильно меняется": out.variability > .8,
         "рост на границе диапазона": (out.growth <= .7001) | (out.growth >= 1.499),
         "много восстановленного спроса": out.restored_share > .1,
-        "существенные разовые отгрузки": out.excluded_share > .1,
+        "существенные разовые отгрузки": (out.excluded_share > .1) |
+            (out.current_spike_qty.fillna(0) > .25 * out.forecast_month.clip(lower=1)),
     }
     score = sum(flag.astype(int) for flag in factors.values())
     severe = ((out.history_months < 6) | (out.active_share < 1/3) |

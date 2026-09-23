@@ -209,6 +209,7 @@ def test_current_month_spike_is_explained_without_changing_stock(sample):
     item = result["orders"].iloc[0]
     assert item.current_spike_qty == 7488
     assert item.current_spike_count == 1
+    assert item.confidence != "Высокая"
     assert item.stock == baseline.stock
     assert item.recommended == baseline.recommended
     assert "В текущем месяце обнаружена разовая отгрузка 7 488 шт." in item.explanation
