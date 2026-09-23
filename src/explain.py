@@ -37,6 +37,8 @@ def explain_item(row):
         text += f" Из прошлых полных месяцев исключено {int(row['spike_count'])} разовых всплесков на {quantity(row['excluded'])} ед."
     if row.get("restored_amount", 0) > 0:
         text += f" После дефицита восстановлено {quantity(row['restored_amount'])} ед. спроса."
+    if row.get("smoothed_amount", 0) > 0:
+        text += f" Для устойчивого прогноза сглажено {quantity(row['smoothed_amount'])} ед. месячных пиков."
     if row.get("current_spike_qty", 0) > 0:
         text += (f" В текущем месяце обнаружена разовая отгрузка {quantity(row['current_spike_qty'])} шт., "
                  "в регулярную потребность не включена.")

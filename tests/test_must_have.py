@@ -1,4 +1,6 @@
 from copy import deepcopy
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -82,6 +84,59 @@ def test_stockout_compensation(sample):
     uncorrected = replenish(sample["items"], raw, forecast(raw, sample["season"]), 30).iloc[0].recommended
     assert restored.restored_amount.sum() > 0
     assert compensated > uncorrected
+
+
+def test_stockout_uses_recent_level(sample):
+    sample["sales"].loc[sample["sales"].month < "2025-09-01", "qty"] = 1000
+    shortage = sample["sales"].month == "2026-04-01"
+    sample["sales"].loc[shortage, "qty"] = 0
+    sample["stocks"].loc[shortage, "stock"] = 0
+    demand = restore(*clean(sample["sales"], sample["tx"])[:1], sample["stocks"], sample["season"])
+    april = demand.loc[shortage].iloc[0]
+    assert april.stockout
+    assert 0 < april.restored_qty <= 20
+    assert april.available_months >= 3
+    scarce = deepcopy(sample)
+    recent = (scarce["stocks"].month >= "2025-09-01") & (scarce["stocks"].month < "2026-09-01")
+    scarce["stocks"].loc[recent, "stock"] = 0
+    scarce["stocks"].loc[scarce["stocks"].month.isin(pd.to_datetime(["2026-02-01", "2026-03-01"])), "stock"] = 10
+    scarce_demand = restore(*clean(scarce["sales"], scarce["tx"])[:1], scarce["stocks"], scarce["season"])
+    assert not scarce_demand.loc[scarce_demand.month == "2026-04-01", "stockout"].iloc[0]
+
+
+def test_single_spike_not_seasonality(sample):
+    # No invoice line exists for 2024, so the monthly Hampel step must protect
+    # both the forecast level and the article seasonality.
+    sample["sales"].loc[sample["sales"].month == "2024-09-01", "qty"] = 1000
+    demand = restore(*clean(sample["sales"], sample["tx"])[:1], sample["stocks"], sample["season"])
+    predicted = forecast(demand, sample["season"])
+    september = predicted.loc[predicted.month == "2026-09-01"].iloc[0]
+    assert september.season_index <= 2
+    assert september.forecast < 60
+
+
+def test_safety_stock_capped(sample):
+    sample["sales"].loc[sample["sales"].month.dt.month.isin([1, 4, 7]), "qty"] = 200
+    result = calculate(sample)["orders"].iloc[0]
+    assert result.safety_stock <= result.forecast_month + 1e-9
+    assert result.safety_stock <= result.horizon_demand + 1e-9
+
+
+def test_manual_date_no_future_leak(sample):
+    sample["source_as_of"] = date(2026, 9, 22)
+    config = replace(DEFAULT, as_of=date(2026, 4, 1))
+    baseline = calculate(sample, config)
+    altered = deepcopy(sample)
+    altered["sales"].loc[altered["sales"].month >= "2026-04-01", "qty"] = 100000
+    altered["stocks"].loc[altered["stocks"].month > "2026-04-01", "stock"] = 100000
+    altered["items"].loc[0, ["free_stock", "transit"]] = [100000, 100000]
+    altered["tx"] = pd.concat([altered["tx"], pd.DataFrame({
+        "date": [pd.Timestamp("2026-07-10")], "invoice": ["future"], "code": ["A_"], "qty": [100000.],
+    })], ignore_index=True)
+    compared = calculate(altered, config)
+    pd.testing.assert_frame_equal(baseline["predictions"], compared["predictions"])
+    assert baseline["orders"].iloc[0].recommended == compared["orders"].iloc[0].recommended
+    assert compared["demand"].month.max() == pd.Timestamp("2026-04-01")
 
 
 def test_one_off_excluded(sample):

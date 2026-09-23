@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ("sales_tx.xlsx", "sales_monthly.xlsx", "stock_monthly.xlsx", "in_transit.xlsx", "moq.xlsx", "seasonality.xlsx")
-CACHE_SCHEMA = 2
+CACHE_SCHEMA = 3
 MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сент", "окт", "ноя", "дек"]
 FULL_MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 
@@ -99,15 +99,18 @@ def brand_season(path):
     book = load_workbook(path, read_only=True, data_only=True)
     rows = list(book.active.values)
     years = []
+    history = []
     for row in rows:
         if row and str(row[0]) in ("2024", "2025"):
-            years.append([number(x) for x in row[1:13]])
+            amounts = [number(x) for x in row[1:13]]
+            years.append(amounts)
+            history.extend((int(row[0]), month, amount) for month, amount in enumerate(amounts, 1))
     book.close()
     if not years:
         raise ValueError(f"нет строк сезонности 2024–2025: {path}")
     arr = np.array(years, dtype=float).mean(axis=0)
     arr = arr / arr.mean() if arr.mean() > 0 else np.ones(12)
-    return pd.DataFrame({"month_num": range(1, 13), "index": arr})
+    return pd.DataFrame({"month_num": range(1, 13), "index": arr}), pd.DataFrame(history, columns=["year", "month_num", "amount"])
 
 
 def transit(path, supplier):
@@ -205,10 +208,10 @@ def load_supplier(supplier, use_cache=True, source_dir=None):
     items["manager_category"] = items.manager_category.fillna("")
     items["supplier"] = "IEK" if supplier == "IEK" else "Systeme Electric"
     try:
-        season = brand_season(raw / "seasonality.xlsx")
+        season, season_history = brand_season(raw / "seasonality.xlsx")
     except Exception as exc:
         raise ValueError(f"seasonality.xlsx: {exc}") from exc
-    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": season, "lead_days": lead, "source_as_of": latest_sale_date(tx)}
+    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": season, "season_history": season_history, "lead_days": lead, "source_as_of": latest_sale_date(tx)}
     if use_cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
         with cache.open("wb") as f:

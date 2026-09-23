@@ -4,15 +4,18 @@ import numpy as np
 import pandas as pd
 from src.config import DEFAULT
 from src.explain import explain_item, short_reason
+from src.stable import stabilize
 
 
 def replenish(items, demand, predictions, lead_days, config=DEFAULT):
+    if "stable_qty" not in demand:
+        demand = stabilize(demand, config)
     last_month = pd.Timestamp(config.as_of).replace(day=1)
     hist = demand[(demand.month >= last_month - pd.DateOffset(months=12)) & (demand.month < last_month)]
-    totals = hist.groupby("code").agg(volume=("restored_qty", "sum"), excluded=("excluded", "sum"), spike_count=("spike_count", "sum"), restored_amount=("restored_amount", "sum"), sigma=("restored_qty", "std"))
+    totals = hist.groupby("code").agg(volume=("restored_qty", "sum"), excluded=("excluded", "sum"), spike_count=("spike_count", "sum"), restored_amount=("restored_amount", "sum"), sigma=("stable_qty", "std"), smoothed_amount=("smoothed_amount", "sum"))
     totals["sigma"] = totals.sigma.fillna(0)
     out = items.merge(totals, on="code", how="left")
-    for c in ("volume", "excluded", "spike_count", "restored_amount", "sigma"):
+    for c in ("volume", "excluded", "spike_count", "restored_amount", "sigma", "smoothed_amount"):
         out[c] = out[c].fillna(0)
     recent_start = last_month - pd.DateOffset(months=6)
     recent = demand[(demand.month >= recent_start) & (demand.month < last_month)].groupby("code").agg(
@@ -55,6 +58,7 @@ def replenish(items, demand, predictions, lead_days, config=DEFAULT):
     out["horizon_demand"] = needs
     intermittent = out.active_months < 4
     out.loc[intermittent, "safety_stock"] = np.minimum(out.loc[intermittent, "safety_stock"], out.loc[intermittent, "horizon_demand"])
+    out["safety_stock"] = np.minimum(out.safety_stock, np.minimum(out.forecast_month, out.horizon_demand))
     out["no_stable_demand"] = (out.recent_sales <= 0) | (out.forecast_month < 0.5)
     out.loc[out.no_stable_demand, "safety_stock"] = 0
     out["need"] = out.horizon_demand + out.safety_stock

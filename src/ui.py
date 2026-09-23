@@ -126,7 +126,7 @@ def _render_card(results, full, supplier, view):
     pred = results[source]["predictions"].query("code == @item.code").sort_values("month")
     figure = go.Figure()
     figure.add_scatter(x=history.month, y=history.raw_qty, mode="lines+markers", name="Фактические продажи")
-    figure.add_scatter(x=history.month, y=history.restored_qty, mode="lines+markers", name="Очищенный спрос")
+    figure.add_scatter(x=history.month, y=history.stable_qty, mode="lines+markers", name="Устойчивый спрос")
     flagged = history[history.stockout]
     figure.add_scatter(x=flagged.month, y=flagged.restored_qty, mode="markers",
                        marker={"symbol": "x", "size": 12}, name="Дефицит")
