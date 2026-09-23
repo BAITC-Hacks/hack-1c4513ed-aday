@@ -1,0 +1,1 @@
+"""EKT StockPilot calculation package."""
