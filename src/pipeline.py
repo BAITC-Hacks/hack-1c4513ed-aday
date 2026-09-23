@@ -36,7 +36,15 @@ def snapshot(data, config=DEFAULT):
         items = data["items"].copy()
         items["transit"] = 0.0
         items["free_stock"] = np.nan
+        for field in ("manager_avg12", "manager_cover", "manager_order"):
+            if field in items:
+                items[field] = np.nan
+        if "manager_order_filled" in items:
+            items["manager_order_filled"] = False
+        if "manager_category" in items:
+            items["manager_category"] = ""
         result["items"] = items
+        result["lead_days"] = config.default_lead_days
     return result
 
 

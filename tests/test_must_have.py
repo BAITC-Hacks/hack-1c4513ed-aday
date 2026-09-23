@@ -125,18 +125,21 @@ def test_safety_stock_capped(sample):
 
 def test_manual_date_no_future_leak(sample):
     sample["source_as_of"] = date(2026, 9, 22)
+    sample["lead_days"] = 18
     config = replace(DEFAULT, as_of=date(2026, 4, 1))
     baseline = calculate(sample, config)
     altered = deepcopy(sample)
     altered["sales"].loc[altered["sales"].month >= "2026-04-01", "qty"] = 100000
     altered["stocks"].loc[altered["stocks"].month > "2026-04-01", "stock"] = 100000
     altered["items"].loc[0, ["free_stock", "transit"]] = [100000, 100000]
+    altered["lead_days"] = 300
     altered["tx"] = pd.concat([altered["tx"], pd.DataFrame({
         "date": [pd.Timestamp("2026-07-10")], "invoice": ["future"], "code": ["A_"], "qty": [100000.],
     })], ignore_index=True)
     compared = calculate(altered, config)
     pd.testing.assert_frame_equal(baseline["predictions"], compared["predictions"])
     assert baseline["orders"].iloc[0].recommended == compared["orders"].iloc[0].recommended
+    assert compared["orders"].iloc[0].lead_days == DEFAULT.default_lead_days
     assert compared["demand"].month.max() == pd.Timestamp("2026-04-01")
 
 
