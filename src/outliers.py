@@ -10,36 +10,38 @@ def clean(sales, tx, config=DEFAULT):
     result["clean_qty"] = result.raw_qty.astype(float)
     result["excluded"] = 0.0
     result["spike_count"] = 0
-    start = pd.Timestamp(config.as_of) - pd.DateOffset(months=12)
-    recent = tx[(tx.date >= start) & (tx.date <= pd.Timestamp(config.as_of)) & (tx.qty > 0)].copy()
+    # The same invoice rule must cover both sides of the year-on-year comparison.
+    recent = tx[(tx.date >= "2025-01-01") & (tx.date < pd.Timestamp(config.as_of) + pd.Timedelta(days=1)) & (tx.qty > 0)].copy()
     if len(recent):
         stats = recent.groupby("code").qty.agg(median="median", count="count")
         recent = recent.join(stats, on="code")
-        mad = recent.groupby("code").apply(lambda g: (g.qty - g["median"]).abs().median(), include_groups=False).rename("mad")
+        recent["deviation"] = (recent.qty - recent["median"]).abs()
+        mad = recent.groupby("code").deviation.median().rename("mad")
         recent = recent.join(mad, on="code")
         recent["threshold"] = np.maximum(recent["median"] + config.outlier_k * 1.4826 * recent.mad, config.outlier_m * recent["median"])
-        recent["excess"] = np.where((recent.qty > recent.threshold) & (recent.qty > config.min_outlier_qty) & (recent["count"] >= 4), recent.qty - recent.threshold, 0)
         recent["month"] = recent.date.dt.to_period("M").dt.to_timestamp()
-        spikes = recent[recent.excess > 0][["code", "month", "date", "qty", "threshold", "excess"]].copy()
+        candidates = recent[(recent.qty > recent.threshold) & (recent.qty > config.min_outlier_qty) & (recent["count"] >= 4)].copy()
+        months = pd.date_range("2025-01-01", pd.Timestamp(config.as_of).replace(day=1), freq="MS")
+        maxima = recent.groupby(["code", "month"]).qty.max()
+        rare_indices = []
+        for sku, group in candidates.groupby("code"):
+            monthly_max = maxima.loc[sku].reindex(months, fill_value=0).to_numpy(dtype=float)
+            comparable = monthly_max[None, :] >= group.qty.to_numpy()[:, None] / 2
+            width = min(12, len(months))
+            counts = np.lib.stride_tricks.sliding_window_view(comparable, width, axis=1).sum(axis=2)
+            starts = np.arange(counts.shape[1])
+            positions = months.get_indexer(group.month)
+            valid = (starts[None, :] <= positions[:, None]) & (starts[None, :] + width > positions[:, None])
+            regular = np.where(valid, counts, 0).max(axis=1) >= 3
+            rare_indices.extend(group.index[~regular].tolist())
+        spikes = candidates.loc[rare_indices, ["code", "month", "date", "qty", "threshold"]].copy()
+        # A truly exceptional shipment is removed in full. Monthly ordinary
+        # demand remains untouched; no second month-level median cap is used.
+        spikes["excess"] = spikes.qty
         adj = spikes.groupby(["code", "month"]).agg(excluded=("excess", "sum"), spike_count=("excess", "size")).reset_index()
         result = result.drop(columns=["excluded", "spike_count"]).merge(adj, on=["code", "month"], how="left")
         result[["excluded", "spike_count"]] = result[["excluded", "spike_count"]].fillna(0)
         result["clean_qty"] = (result.raw_qty - result.excluded).clip(lower=0)
-        # A line capped at 10x a typical invoice can still inflate its month.
-        # Cap only months already flagged above, using neighboring monthly demand.
-        for sku, group in result.groupby("code"):
-            flagged = group[group.spike_count > 0]
-            if flagged.empty:
-                continue
-            baseline = group[(group.spike_count == 0) & (group.month >= pd.Timestamp(config.as_of) - pd.DateOffset(months=12))].clean_qty
-            if len(baseline) < 3:
-                continue
-            med = baseline.median()
-            mad_month = (baseline - med).abs().median()
-            cap = max(med + config.outlier_k * 1.4826 * mad_month, med * 1.1)
-            extra = (flagged.clean_qty - cap).clip(lower=0)
-            result.loc[flagged.index, "clean_qty"] -= extra
-            result.loc[flagged.index, "excluded"] += extra
     else:
         spikes = pd.DataFrame(columns=["code", "month", "date", "qty", "threshold", "excess"])
     # 2024 has no reliable invoice lines; apply a one-sided Hampel filter per SKU.

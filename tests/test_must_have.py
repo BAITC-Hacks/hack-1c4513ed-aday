@@ -48,6 +48,7 @@ def test_all_sources_affect_order(sample):
     # Changing the ABC distribution changes the service factor and safety stock.
     months = pd.date_range("2025-09-01", periods=12, freq="MS")
     synthetic = pd.concat([pd.DataFrame({"code": sku, "month": months, "restored_qty": [vol - 8, vol + 8] * 6, "excluded": 0., "spike_count": 0, "restored_amount": 0., "stock": 0.}) for sku, vol in [("X", 80), ("Y", 20), ("Z", 5)]])
+    synthetic["raw_qty"] = synthetic.restored_qty
     items = pd.DataFrame({"code": ["X", "Y", "Z"], "name": ["X", "Y", "Z"], "article": ["X", "Y", "Z"], "free_stock": [np.nan] * 3, "transit": [0.] * 3, "moq": [1.] * 3, "supplier": ["IEK"] * 3})
     future = pd.concat([pd.DataFrame({"code": sku, "month": pd.date_range("2026-09-01", periods=6, freq="MS"), "forecast": 20., "growth": 1., "season_index": 1., "season_source": "бренд"}) for sku in ("X", "Y", "Z")])
     first = replenish(items, synthetic, future, 30).set_index("code").loc["Y"]
@@ -70,7 +71,7 @@ def test_seasonality(sample):
 
 def test_stockout_compensation(sample):
     affected = (sample["sales"].month >= "2026-03-01") & (sample["sales"].month < "2026-09-01")
-    sample["sales"].loc[affected, "qty"] = 0
+    sample["sales"].loc[affected, "qty"] = 1
     sample["stocks"].loc[affected, "stock"] = 0
     cleaned, _ = clean(sample["sales"], sample["tx"])
     restored = restore(cleaned, sample["stocks"], sample["season"])
@@ -90,6 +91,33 @@ def test_one_off_excluded(sample):
     result = calculate(changed)
     assert len(result["spikes"]) > 0
     assert abs(result["orders"].iloc[0].recommended - baseline) / baseline <= .1
+
+
+def test_growth_symmetric(sample):
+    changed = deepcopy(sample)
+    changed["sales"].loc[changed["sales"].month == "2025-04-01", "qty"] += 10000
+    changed["tx"] = pd.concat([changed["tx"], pd.DataFrame({"date": [pd.Timestamp("2025-04-12")], "invoice": ["last-year-spike"], "code": ["A_"], "qty": [10000.]})], ignore_index=True)
+    result = calculate(changed)
+    assert ((result["spikes"].date == pd.Timestamp("2025-04-12")).any())
+    assert result["orders"].iloc[0].growth == pytest.approx(1, abs=.05)
+
+
+def test_no_order_without_demand(sample):
+    quiet = (sample["sales"].month >= "2026-03-01") & (sample["sales"].month < "2026-09-01")
+    sample["sales"].loc[quiet, "qty"] = 0
+    result = calculate(sample)["orders"].iloc[0]
+    assert result.recommended == 0
+    assert "Нет устойчивого спроса" in result.explanation
+
+
+def test_recurring_wholesale_kept(sample):
+    months = ["2026-01-01", "2026-02-01", "2026-03-01"]
+    sample["sales"].loc[sample["sales"].month.isin(pd.to_datetime(months)), "qty"] += 1000
+    extra = pd.DataFrame({"date": pd.to_datetime(months), "invoice": ["bulk1", "bulk2", "bulk3"], "code": "A_", "qty": 1000.})
+    sample["tx"] = pd.concat([sample["tx"], extra], ignore_index=True)
+    cleaned, spikes = clean(sample["sales"], sample["tx"])
+    assert not spikes.qty.eq(1000).any()
+    assert cleaned.loc[cleaned.month.isin(pd.to_datetime(months)), "clean_qty"].eq(1020).all()
 
 
 def test_output_explained_by_supplier(sample):
