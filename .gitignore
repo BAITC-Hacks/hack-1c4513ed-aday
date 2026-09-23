@@ -4,4 +4,5 @@
 *.pyc
 .pytest_cache/
 data/cache/
+data/uploads/
 output/

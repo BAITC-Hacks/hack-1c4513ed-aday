@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import pickle
 import statistics
+import hashlib
 import pandas as pd
 import numpy as np
 from openpyxl import load_workbook
@@ -61,6 +62,8 @@ def monthly(path):
     key = column(df, "номенклатура.код", "код 1с")
     name = column(df, "номенклатура")
     months = {c: month_header(c) for c in df if month_header(c) is not None}
+    if not months:
+        raise ValueError("не найдены колонки месяцев")
     base = df[[key, name, *months]].copy()
     base.columns = ["code", "name", *months.values()]
     base["code"] = base.code.map(code)
@@ -92,7 +95,7 @@ def brand_season(path):
             years.append([number(x) for x in row[1:13]])
     book.close()
     if not years:
-        return pd.DataFrame({"month_num": range(1, 13), "index": [1.0] * 12})
+        raise ValueError(f"нет строк сезонности 2024–2025: {path}")
     arr = np.array(years, dtype=float).mean(axis=0)
     arr = arr / arr.mean() if arr.mean() > 0 else np.ones(12)
     return pd.DataFrame({"month_num": range(1, 13), "index": arr})
@@ -103,6 +106,8 @@ def transit(path, supplier):
     df["code"] = df[column(df, "код 1с")].map(code)
     if supplier == "IEK":
         doc_cols = [c for c in df if "поступление до" in c.lower()]
+        if not doc_cols:
+            raise ValueError("нет колонок документов с датами поступления")
         lead = []
         for c in doc_cols:
             start = re.search(r"от\s+(\d{1,2})\s+([а-я]+)\s+(20\d{2})", c.lower())
@@ -142,20 +147,39 @@ def moq(path):
     return df[["code", "moq", "moq_article"]].drop_duplicates("code")
 
 
-def load_supplier(supplier, use_cache=True):
+def load_supplier(supplier, use_cache=True, source_dir=None):
     if supplier not in ("IEK", "SystemeElectric"):
         raise ValueError(supplier)
-    raw = ROOT / "data" / "raw" / supplier
-    cache = ROOT / "data" / "cache" / f"{supplier}.pkl"
-    sources = list(raw.glob("*.xlsx"))
+    raw = Path(source_dir).resolve() if source_dir is not None else ROOT / "data" / "raw" / supplier
+    suffix = "" if source_dir is None else "-" + hashlib.sha256(str(raw).encode()).hexdigest()[:12]
+    cache = ROOT / "data" / "cache" / f"{supplier}{suffix}.pkl"
+    sources = [raw / name for name in FILES]
+    missing = [path.name for path in sources if not path.is_file()]
+    if missing:
+        raise ValueError(f"Не найдены файлы: {', '.join(missing)}")
     if use_cache and cache.exists() and all(cache.stat().st_mtime > p.stat().st_mtime for p in sources):
         with cache.open("rb") as f:
             return pickle.load(f)
-    sales, names = monthly(raw / "sales_monthly.xlsx")
-    stocks, stock_names = monthly(raw / "stock_monthly.xlsx")
-    tx = transactions(raw / "sales_tx.xlsx")
-    transit_df, lead = transit(raw / "in_transit.xlsx", supplier)
-    moq_df = moq(raw / "moq.xlsx")
+    try:
+        sales, names = monthly(raw / "sales_monthly.xlsx")
+    except Exception as exc:
+        raise ValueError(f"sales_monthly.xlsx: {exc}") from exc
+    try:
+        stocks, stock_names = monthly(raw / "stock_monthly.xlsx")
+    except Exception as exc:
+        raise ValueError(f"stock_monthly.xlsx: {exc}") from exc
+    try:
+        tx = transactions(raw / "sales_tx.xlsx")
+    except Exception as exc:
+        raise ValueError(f"sales_tx.xlsx: {exc}") from exc
+    try:
+        transit_df, lead = transit(raw / "in_transit.xlsx", supplier)
+    except Exception as exc:
+        raise ValueError(f"in_transit.xlsx: {exc}") from exc
+    try:
+        moq_df = moq(raw / "moq.xlsx")
+    except Exception as exc:
+        raise ValueError(f"moq.xlsx: {exc}") from exc
     items = pd.concat([names, stock_names], ignore_index=True).drop_duplicates("code")
     items = items.merge(transit_df, on="code", how="left").merge(moq_df, on="code", how="left")
     items["article"] = items.article.fillna("")
@@ -165,14 +189,19 @@ def load_supplier(supplier, use_cache=True):
         items[col] = items[col].fillna(0)
     items["manager_category"] = items.manager_category.fillna("")
     items["supplier"] = "IEK" if supplier == "IEK" else "Systeme Electric"
-    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": brand_season(raw / "seasonality.xlsx"), "lead_days": lead}
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    with cache.open("wb") as f:
-        pickle.dump(result, f)
+    try:
+        season = brand_season(raw / "seasonality.xlsx")
+    except Exception as exc:
+        raise ValueError(f"seasonality.xlsx: {exc}") from exc
+    result = {"items": items.drop(columns="moq_article"), "sales": sales, "stocks": stocks.rename(columns={"qty": "stock"}), "tx": tx, "season": season, "lead_days": lead}
+    if use_cache:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        with cache.open("wb") as f:
+            pickle.dump(result, f)
     return result
 
 
-def source_signature(supplier):
+def source_signature(supplier, source_dir=None):
     """Cache key changes whenever a source workbook changes."""
-    folder = ROOT / "data" / "raw" / supplier
-    return tuple((name, (folder / name).stat().st_mtime_ns, (folder / name).stat().st_size) for name in FILES)
+    folder = Path(source_dir).resolve() if source_dir is not None else ROOT / "data" / "raw" / supplier
+    return (str(folder),) + tuple((name, (folder / name).stat().st_mtime_ns, (folder / name).stat().st_size) for name in FILES)

@@ -6,9 +6,10 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from src.config import DEFAULT
-from src.loader import load_supplier, source_signature
+from src.loader import FILES, load_supplier, source_signature
 from src.pipeline import prepare, finish
 from src.export import build_workbook
+from src.uploads import validate_and_store
 from src.llm import explain_item as ai_explain, assistant_answer
 
 st.set_page_config(page_title="EKT StockPilot", page_icon="📦", layout="wide")
@@ -16,12 +17,16 @@ st.title("EKT StockPilot — автопилот закупа")
 st.caption("Расчёт на 22.09.2026 по выгрузкам 1С. Количества рассчитывает Python; ИИ помогает с объяснением.")
 
 @st.cache_data(show_spinner=False)
-def cached_prepare(name, fingerprint):
+def cached_prepare(name, fingerprint, source_dir):
     started = time.perf_counter()
-    prepared = prepare(load_supplier(name))
+    prepared = prepare(load_supplier(name, source_dir=source_dir))
     return prepared, time.perf_counter() - started
 
 
+if "uploaded_sources" not in st.session_state:
+    st.session_state.uploaded_sources = {}
+uploaded_now = False
+revert_to_demo = False
 with st.sidebar:
     st.header("Настройки расчёта")
     supplier = st.selectbox("Поставщик", ["Все", "IEK", "Systeme Electric"])
@@ -34,17 +39,43 @@ with st.sidebar:
         z_b = st.number_input("Уровень сервиса B, z", 0.0, 4.0, DEFAULT.service_z["B"], step=.01)
         z_c = st.number_input("Уровень сервиса C, z", 0.0, 4.0, DEFAULT.service_z["C"], step=.01)
         calculate = st.form_submit_button("Рассчитать", type="primary", width="stretch")
+    st.divider()
+    st.subheader("Загрузить новые выгрузки 1С")
+    upload_supplier = st.selectbox("Поставщик для загрузки", ["IEK", "Systeme Electric"])
+    upload_key = "IEK" if upload_supplier == "IEK" else "SystemeElectric"
+    labels = {"sales_tx.xlsx": "Продажи по накладным", "sales_monthly.xlsx": "Помесячные продажи", "stock_monthly.xlsx": "Помесячные остатки", "in_transit.xlsx": "Товар в пути", "moq.xlsx": "MOQ и кратность", "seasonality.xlsx": "Сезонность"}
+    with st.form("upload_workbooks"):
+        uploaded = {name: st.file_uploader(label, type=["xlsx"], key=f"upload_{upload_key}_{name}") for name, label in labels.items()}
+        upload_clicked = st.form_submit_button("Проверить и использовать")
+    if upload_clicked:
+        try:
+            path = validate_and_store(upload_key, uploaded)
+            st.session_state.uploaded_sources[upload_key] = str(path)
+            uploaded_now = True
+            st.success(f"Проверены все {len(FILES)} файлов. Используются загруженные данные {upload_supplier}.")
+        except Exception as exc:
+            st.error(f"Не удалось принять выгрузки: {exc}")
+    revert_to_demo = st.button("Вернуться к демо-данным")
+    if revert_to_demo:
+        st.session_state.uploaded_sources = {}
+    for name, label in (("IEK", "IEK"), ("SystemeElectric", "Systeme Electric")):
+        mode = "загруженные" if name in st.session_state.uploaded_sources else "демо"
+        st.caption(f"{label}: {mode} данные")
 
-if calculate or "calculation" not in st.session_state:
-    settings = (int(review), float(z_a), float(z_b), float(z_c))
-    config = replace(DEFAULT, review_days=int(review), service_z={"A": z_a, "B": z_b, "C": z_c})
+if calculate or uploaded_now or revert_to_demo or "calculation" not in st.session_state:
+    if calculate or "settings" not in st.session_state:
+        settings = (int(review), float(z_a), float(z_b), float(z_c))
+    else:
+        settings = st.session_state.settings
+    config = replace(DEFAULT, review_days=settings[0], service_z={"A": settings[1], "B": settings[2], "C": settings[3]})
     with st.spinner("Считаем потребность…"):
         try:
             results = {}
             heavy_total = light_total = 0.0
             for name in ("IEK", "SystemeElectric"):
+                source_dir = st.session_state.uploaded_sources.get(name)
                 started = time.perf_counter()
-                prepared, compute_time = cached_prepare(name, source_signature(name))
+                prepared, compute_time = cached_prepare(name, source_signature(name, source_dir), source_dir)
                 heavy_elapsed = time.perf_counter() - started
                 heavy_total += heavy_elapsed
                 print(f"{name}: тяжёлая часть доступ {heavy_elapsed:.2f} с, исходный расчёт {compute_time:.2f} с")
