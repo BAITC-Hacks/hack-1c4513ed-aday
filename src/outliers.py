@@ -25,6 +25,21 @@ def clean(sales, tx, config=DEFAULT):
         result = result.drop(columns=["excluded", "spike_count"]).merge(adj, on=["code", "month"], how="left")
         result[["excluded", "spike_count"]] = result[["excluded", "spike_count"]].fillna(0)
         result["clean_qty"] = (result.raw_qty - result.excluded).clip(lower=0)
+        # A line capped at 10x a typical invoice can still inflate its month.
+        # Cap only months already flagged above, using neighboring monthly demand.
+        for sku, group in result.groupby("code"):
+            flagged = group[group.spike_count > 0]
+            if flagged.empty:
+                continue
+            baseline = group[(group.spike_count == 0) & (group.month >= pd.Timestamp(config.as_of) - pd.DateOffset(months=12))].clean_qty
+            if len(baseline) < 3:
+                continue
+            med = baseline.median()
+            mad_month = (baseline - med).abs().median()
+            cap = max(med + config.outlier_k * 1.4826 * mad_month, med * 1.1)
+            extra = (flagged.clean_qty - cap).clip(lower=0)
+            result.loc[flagged.index, "clean_qty"] -= extra
+            result.loc[flagged.index, "excluded"] += extra
     else:
         spikes = pd.DataFrame(columns=["code", "month", "date", "qty", "threshold", "excess"])
     # 2024 has no reliable invoice lines; apply a one-sided Hampel filter per SKU.
