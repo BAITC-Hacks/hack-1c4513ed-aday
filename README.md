@@ -80,7 +80,7 @@ tests/                  автоматические тесты
 
 ## 6. Требования
 
-- **Python 3.11 или 3.12** с [python.org](https://www.python.org/downloads/). На Windows при установке отметьте **«Add python.exe to PATH»**.
+- **Python 3.10, 3.11 или 3.12** с [python.org](https://www.python.org/downloads/). Проект проверен на Python 3.10 (Windows) и 3.12 (Linux). На Windows при установке отметьте **«Add python.exe to PATH»**.
 - **Git** с [git-scm.com](https://git-scm.com/downloads).
 - Проверьте версии в терминале: `python --version` и `git --version`. На Windows, если команда `python` не найдена, попробуйте `py --version` и советы ниже.
 
@@ -200,8 +200,8 @@ copy .env.example .env
 
 | Симптом | Что сделать |
 | --- | --- |
-| `python` не найден | Установите Python 3.11/3.12 с python.org и включите «Add python.exe to PATH», затем откройте новый терминал. |
-| На Windows работает `py`, но не `python` | Используйте `py -3.12` или `py -3.11` вместо `python` при создании окружения. После активации `.venv` команда `python` должна работать. |
+| `python` не найден | Установите Python 3.10, 3.11 или 3.12 с python.org и включите «Add python.exe to PATH», затем откройте новый терминал. |
+| На Windows работает `py`, но не `python` | Используйте `py -3.12`, `py -3.11` или `py -3.10` вместо `python` при создании окружения. После активации `.venv` команда `python` должна работать. |
 | PowerShell запрещает активацию | Выполните `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, затем повторите `.\.venv\Scripts\Activate.ps1`; либо используйте `cmd` и `.venv\Scripts\activate.bat`. |
 | Порт 8501 занят | Запустите `python -m streamlit run app.py --server.port 8502` и откройте `http://localhost:8502`. |
 | Ошибка установки пакетов | В активной `.venv` выполните `python -m pip install --upgrade pip`, затем повторите `python -m pip install -r requirements.txt`. |
